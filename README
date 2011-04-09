@@ -1,0 +1,2 @@
+ReplayGain support for beets music managment system.
+This plugin requires rgain, to install run: pip install rgain
