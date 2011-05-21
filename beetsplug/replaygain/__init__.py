@@ -64,7 +64,7 @@ class ReplayGainPlugin(BeetsPlugin):
         self.mp3_format = ui.config_val(config, 'replaygain', 'mp3_format', DEFAULT_MP3_FORMAT)
         #self.no_album = ui.config_val(config, 'replaygain', 'no_album', DEFAULT_NO_ALBUM, bool)
     
-    def album_imported(self, album):
+    def album_imported(self, lib, album):
         force = True
         dry_run = False        
         is_album = True
