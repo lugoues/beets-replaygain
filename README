@@ -3,7 +3,8 @@ This plugin requires rgain, to install run: pip install rgain
 
 
 Setup:
--install rgain: pip install rgain
+-install rgain: 
+    pip install rgain
 -add your gitclone path to pluginpaths: in your beets config
 -add replaygain to your plugins: variable
 
@@ -12,4 +13,5 @@ You can add a [replaygain] section to your config with the following options:
 
 reference_loundess: defaults to 89, sets the reference loundess you wish to use in replaygain
 mp3_format: what replaygain format to use when tagging mp3 files.  Possible formats are 'ql' (used by Quod Libet), 'fb2k' (read and written by foobar2000, also understood by Quod Libet) and 'mp3gain' (tags as written by the 'mp3gain' program
+overwrite: if True then the plugin will overwrite any existing replay gain tags.
 
