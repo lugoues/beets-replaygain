@@ -18,162 +18,85 @@
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #THE SOFTWARE.
 
-#portions of this plugin was borred from the rgain package 
-#http://pypi.python.org/pypi/rgain/1.0.1
-
-from beets import autotag, ui
-from beets.plugins import BeetsPlugin
-from beets.ui import print_, Subcommand
-
-import sys
-import os.path
+import logging
 import gobject
-
 import pygst
 pygst.require('0.10')
 import gst
 
-from rgain import rgio
-from rgain.script import ou, un, Error, common_options
+from rgain import rgcalc
 
-
-from collections import defaultdict
-from rgain import rgio
-#from rgain.script.replaygain import do_gain
-
-import os, logging
+from beets import ui
+from beets.plugins import BeetsPlugin
+from beets.ui import print_, Subcommand
+from beets.mediafile import MediaFile, FileTypeError, UnreadableFileError
 
 log = logging.getLogger('beets')
 log.addHandler(logging.StreamHandler())
 
-
 DEFAULT_REFERENCE_LOUDNESS = 89
 DEFAULT_MP3_FORMAT = 'fb2k'
-DEFAULT_NO_ALBUM = False
-
-verbose = False
 
 class ReplayGainPlugin(BeetsPlugin):
-    '''Provides replay gain analysis for beets'''
+    '''Provides replay gain analysis for the Beets Music Manager'''
+
+    ref_level = 0
+    mp3_format = ''
+    overwrite = False
 
     def __init__(self):
         self.register_listener('album_imported', self.album_imported)
+        self.register_listener('item_imported', self.item_imported)
 
     def configure(self, config):
-        self.ref_level =ui.config_val(config, 'replaygain', 'reference_loundess', DEFAULT_REFERENCE_LOUDNESS, int)
+        self.ref_level = ui.config_val(config, 'replaygain', 'reference_loundess', DEFAULT_REFERENCE_LOUDNESS, int)
         self.mp3_format = ui.config_val(config, 'replaygain', 'mp3_format', DEFAULT_MP3_FORMAT)
-        #self.no_album = ui.config_val(config, 'replaygain', 'no_album', DEFAULT_NO_ALBUM, bool)
-    
+        self.overwrite = ui.config_val(config, 'replaygain', 'overwrite', False)
+
     def album_imported(self, lib, album):
-        force = True
-        dry_run = False        
-        is_album = True
-        verbose = False
-        
+        self.write_album = True
+
         print_("Tagging Replay Gain:  %s - %s" % (album.albumartist, album.album))
-        
-        item_paths = [item.path for item in album.items()]
-        do_gain(item_paths, self.ref_level, force, dry_run, is_album, self.mp3_format )
 
-# calculate the gain for the given files
-def calculate_gain(files, ref_level):
-    # this has to be done here since Gstreamer hooks into the command line
-    # arguments if it's imported on module level
-    from rgain import rgcalc
+        try:
+            media_files = [MediaFile(item.path) for item in album.items()]
+            media_files = [mf for mf in media_files if self.requires_gain( mf )]
 
-    # handlers
-    def on_finished(evsrc, trackdata, albumdata):
-        loop.quit()
+            #calculate gain. Return value - track_data: array dictionary indexed by filename
+            track_data, album_data = rgcalc.calculate([mf.path for mf in media_files], True, self.ref_level)
 
-    def on_trk_started(evsrc, filename):
-        if verbose: print_( ou("  %s:" % filename.decode("utf-8")))
+            for mf in media_files:
+                self.write_gain(mf, track_data, album_data)
 
-    def on_trk_finished(evsrc, filename, gaindata):
-        if gaindata:
-            if verbose: print_( "%.2f dB" % gaindata.gain)
-        else:
-            if verbose: print_( "done" )
+        except (FileTypeError, UnreadableFileError, TypeError, ValueError),e:
+            log.error("failed to calculate replaygain:  %s ", e)
 
-    rg = rgcalc.ReplayGain(files, True, ref_level)
-    rg.connect("all-finished", on_finished)
-    rg.connect("track-started", on_trk_started)
-    rg.connect("track-finished", on_trk_finished)
-    loop = gobject.MainLoop()
-    rg.start()
-    loop.run()
-    return rg.track_data, rg.album_data
+    def item_imported(self, lib, item):
+        try:
+            self.write_album = False
 
+            print_("Tagging Replay Gain:  %s - %s" % (item.artist, item.title))
 
-def do_gain(files, ref_level=89, force=False, dry_run=False, album=True,
-            mp3_format="ql"):
-    
-    files = [un(filename, sys.getfilesystemencoding()) for filename in files]
-    
-    formats_map = rgio.BaseFormatsMap(mp3_format)
-    
-    newfiles = []
-    for filename in files:
-        if not os.path.splitext(filename)[1] in formats_map.supported_formats:
-            if verbose: print_( ou(u"%s: not supported, ignoring it" % filename))
-        else:
-            newfiles.append(filename)
-    files = newfiles
-    
-    if not force:
-        if verbose: print_( "Checking for Replay Gain information ...")
-        newfiles = []
-        for filename in files:
-            if verbose: print_( ou(u"  %s:" % filename))
-            try:
-                trackdata, albumdata = formats_map.read_gain(filename)
-            except Exception, exc:
-                raise Error(u"%s: error - %s" % (filename, exc))
-            else:
-                if trackdata and albumdata:
-                    if verbose: print_( "track and album")
-                elif not trackdata and albumdata:
-                    if verbose: print_( "album only")
-                    newfiles.append(filename)
-                elif trackdata and not albumdata:
-                    if verbose: print_( "track only")
-                    if album:
-                        newfiles.append(filename)
-                else:
-                    if verbose: print_( "none")
-                    newfiles.append(filename)
-        
-        if not album:
-            files = newfiles
-        elif not len(newfiles):
-            files = newfiles
-    
-    if not files:
-        # no files left
-        if verbose: print_( "Nothing to do.")
-        return 0
-    
-    # calculate gain
-    if verbose: print_( "Calculating Replay Gain information ...")
-    try:
-        tracks_data, albumdata = calculate_gain(files, ref_level)
-        if album:
-            if verbose: print_( "  Album gain: %.2f dB" % albumdata.gain)
-    except Exception, exc:
-        raise Error(u"Error while calculating gain - %s" % exc)
-    
-    if not album:
-        albumdata = None
-    
-    # write gain
-    if not dry_run:
-        if verbose: print_( "Writing Replay Gain information to files ...")
-        for filename, trackdata in tracks_data.iteritems():
-            if verbose: print_( ou(u"  %s:" % filename))
-            try:
-                formats_map.write_gain(filename, trackdata, albumdata)
-            except Exception, exc:
-                raise Error(u"%s: error - %s" % (filename, exc))
-            else:
-                if verbose: print_( "done")
-    
-    if verbose: print_( "Done" )
+            mf = MediaFile(item.path)
+
+            if self.requires_gain(mf):
+                track_data, album_data = rgcalc.calculate([ mf.path], True, self.ref_level)
+                self.write_gain(mf, track_data, None)
+        except (FileTypeError, UnreadableFileError, TypeError, ValueError),e:
+            log.error("failed to calculate replaygain:  %s ", e)
+
+    def write_gain(self, mf, track_data, album_data):
+        try:
+            mf.rg_track_gain = track_data[mf.path].gain
+            mf.rg_track_peak= track_data[mf.path].peak
+
+            if self.write_album and album_data :
+                mf.rg_album_gain = album_data.gain
+                mf.rg_album_peak= album_data.peak
+
+            mf.save()
+        except (FileTypeError, UnreadableFileError, TypeError, ValueError),e:
+            log.error("failed to write replaygain: %s" % (mf.title))
+
+    def requires_gain(self, mf):
+        return self.overwrite or (not mf.rg_track_gain or not mf.rg_track_peak) or ((not mf.rg_album_gain or not mf.rg_album_peak) and self.write_album)
