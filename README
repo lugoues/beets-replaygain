@@ -1,3 +1,7 @@
+----------------------------
+The ReplayGain plugin has been merged into beets. This repository will no longer be updated.
+----------------------------
+
 ReplayGain support for beets music managment system.
 This plugin requires rgain, to install run: pip install rgain
 
